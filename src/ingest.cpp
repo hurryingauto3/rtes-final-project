@@ -84,7 +84,14 @@ void acquisition_task() {
             // We're using a mutex so that we won't overwrite stuff that's in progress
             // and will pause measuring if necessary to prevent it. We can only safely pause here, between batches,
             // because we are only calculating FFT-related stuff within a single batch.
-            ingest_batch_mutex.lock();
+            #ifdef DEBUG_WARN_OVERFLOW
+                if (!ingest_batch_mutex.trylock()) {
+                    printf("\nIMU BUFFER OVERFLOW! Processing is taking too long!\n\n");
+                    ingest_batch_mutex.lock();
+                }
+            #else
+                ingest_batch_mutex.lock();
+            #endif
             ingest_batch_condition.notify_all();
             ingest_batch_mutex.unlock();
         }
