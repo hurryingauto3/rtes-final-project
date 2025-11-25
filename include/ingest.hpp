@@ -27,3 +27,9 @@ typedef struct {
 
 /** Retrieve the currently readable batch of IMU data. */
 IMUBatch* get_batch();
+
+/** Perform setup for the FFT */
+void init_fft();
+
+/** Run the FFT on some data to get an array of frequency magnitudes. */
+void do_fft(float data[BATCH_SIZE], float frequency_magnitudes[BATCH_SIZE / 2 + 1]);
