@@ -2,6 +2,8 @@
 
 #include <mbed.h>
 
+#include "globals.hpp"
+
 #define DEBUG_WARN_OVERFLOW
 
 extern I2C i2c;
@@ -17,10 +19,6 @@ bool init_imu();
 
 /// @brief Main loop to gather data from the IMU
 void acquisition_task();
-
-#define POLL_RATE 52
-#define BATCH_SIZE_FILLED (3 * POLL_RATE) // 156
-#define BATCH_SIZE 256 // Next highest power of 2
 
 typedef struct {
     float accelerometer[3][BATCH_SIZE];
