@@ -14,7 +14,7 @@ int main() {
   acq_thread.start(acquisition_task);
 
   // Holds an array of frequencies per axis [0, 26/128, ... , 26]Hz
-  float accelerometer_frequencies[3][129], gyroscope_frequencies[3][129];
+  float accelerometer_frequencies[3][BATCH_SIZE / 2 + 1], gyroscope_frequencies[3][BATCH_SIZE / 2 + 1];
 
   ingest_batch_mutex.lock();
   while(1) {
@@ -26,12 +26,12 @@ int main() {
       arm_cmplx_mag_f32(
         imu_data->accelerometer[axis],
         accelerometer_frequencies[axis],
-        256
+        BATCH_SIZE
       );
       arm_cmplx_mag_f32(
         imu_data->gyroscope[axis],
         gyroscope_frequencies[axis],
-        256
+        BATCH_SIZE
       );
     }
   }

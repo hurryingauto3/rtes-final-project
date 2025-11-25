@@ -70,9 +70,14 @@ void acquisition_task() {
             flip_buffer[flop].gyroscope[axis][i_time]     = acc[axis] * (250.f / I16_MAX);
         }
 
-        if (i_time < 255) {
+        if (i_time < BATCH_SIZE_FILLED) {
             i_time += 1;
         } else {
+            // Ensure the rest of the flip buffer is clear
+            for (int axis = 0; axis < 3; axis++) {
+                memset(&flip_buffer[flop].accelerometer[axis][BATCH_SIZE_FILLED], 0, (BATCH_SIZE - BATCH_SIZE) * sizeof(float));
+                memset(&flip_buffer[flop].gyroscope[axis][BATCH_SIZE_FILLED], 0, (BATCH_SIZE - BATCH_SIZE) * sizeof(float));
+            }
             i_time = 0;
             flop = !flop;
             // Start running all tasks that consume the data.
