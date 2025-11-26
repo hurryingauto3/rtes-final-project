@@ -1,13 +1,19 @@
 #include <mbed.h>
 
+#include "globals.hpp"
 #include "ingest.hpp"
 
 int main() {
   static BufferedSerial pc(USBTX, USBRX, 115200);
+
+  #ifdef DEBUG
   if (!init_imu()) {
     printf("IMU not found; aborting!");
     while(1) { ThisThread::sleep_for(1s); }
   }
+  #else
+  init_imu();
+  #endif
 
   Thread acq_thread;
   acq_thread.start(acquisition_task);
