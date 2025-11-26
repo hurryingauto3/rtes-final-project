@@ -4,8 +4,6 @@
 
 #include "globals.hpp"
 
-#define DEBUG_WARN_OVERFLOW
-
 extern I2C i2c;
 
 extern Mutex ingest_batch_mutex;
