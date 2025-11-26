@@ -11,6 +11,8 @@ extern Mutex ingest_batch_mutex;
 // Waiting requires you to have locked the ingest_batch_mutex!
 extern ConditionVariable ingest_batch_condition;
 
+#define GRAVITY_DRIFT_CORRECTION 0.01f
+
 /// @brief Attempt to set up the IMU
 /// @return true if setup completed successfully
 bool init_imu();

@@ -55,11 +55,19 @@ IMUBatch flip_buffer[2];
 bool flop;
 uint8_t i_time;
 
+#define cross(a, b) { \
+    a[1] * b[2] - a[2] * b[1], \
+    a[2] * b[0] - a[0] * b[2], \
+    a[0] * b[1] - a[1] * b[0]  \
+}
+
 #define I16_MAX 32767
 #define ACCEL_SCALE (2.f / I16_MAX)
 #define GYRO_SCALE 
 void acquisition_task() {
+    float32_t down[3];
     int16_t acc[3], gyro[3];
+    bool first = true;
     while (1) {
         imu_events.wait_any(EVT_FRAME_READY);
         for (int axis = 0; axis < 3; axis++) {
@@ -67,10 +75,42 @@ void acquisition_task() {
             read_int16(OUTX_L_G  + 2*axis, gyro[axis]);
         }
 
+        float W[3];
         for (int axis = 0; axis < 3; axis++) {
-            flip_buffer[flop].accelerometer[axis][i_time] = acc[axis] * (  2.f / I16_MAX);
-            flip_buffer[flop].gyroscope[axis][i_time]     = acc[axis] * (250.f / I16_MAX);
+            W[axis] = (250.f / I16_MAX) *  gyro[axis];
+            flip_buffer[flop].gyroscope[axis][i_time] = W[axis];
         }
+
+        // Rotate our previous estimation of "down" into the current device orientation
+        if (!first) {
+            // Convert gyroscope measurements to an axis-angle rotation
+            float theta, sin_theta, cos_theta;
+            arm_sqrt_f32(W[0] * W[0] + W[1] * W[1] + W[2] * W[2], &theta);
+            for (int axis = 0; axis < 3; axis++) {
+                W[axis] /= theta;
+            }
+            theta = theta / POLL_RATE;
+
+            // Rotate "down" into the current frame of reference
+            arm_sin_cos_f32(theta, &sin_theta, &cos_theta);
+            float WxDown[3] = cross(W, down), WxWxDown[3] = cross(W, WxDown);
+            float inv_cos_theta = 1 - cos_theta;
+            for (int axis = 0; axis < 3; axis++) {
+                down[axis] = down[axis] + sin_theta * WxDown[axis] + inv_cos_theta * WxWxDown[axis];
+            }
+        }
+
+        for (int axis = 0; axis < 3; axis++) {
+            float raw_value = (  2.f / I16_MAX) * acc[axis];
+            if (!first) {
+                flip_buffer[flop].accelerometer[axis][i_time] = raw_value - down[axis];
+                down[axis] = (1 - GRAVITY_DRIFT_CORRECTION) * down[axis] + GRAVITY_DRIFT_CORRECTION * raw_value;
+            } else { // Assume we're stationary the first time we measure
+                flip_buffer[flop].accelerometer[axis][i_time] = 0;
+                down[axis] = raw_value;
+            }
+        }
+        first = false;
 
         if (i_time < BATCH_SIZE_FILLED) {
             i_time += 1;
@@ -99,6 +139,7 @@ void acquisition_task() {
         }
     }
 }
+#undef cross
 
 IMUBatch* get_batch() {
     return &(flip_buffer[flop]);
