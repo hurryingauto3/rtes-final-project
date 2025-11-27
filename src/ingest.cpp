@@ -55,6 +55,26 @@ IMUBatch flip_buffer[2];
 bool flop;
 uint8_t i_time;
 
+// Chebyshev-I low pass
+// n=2, 2db pass-band ripple, 7hz cutoff
+struct LowPass {
+    float32_t x[2];
+    float32_t y[2];
+};
+
+LowPass accel_hist[3];
+LowPass gyro_hist[3];
+
+float32_t low_pass(LowPass *hist, float32_t x, bool even_t) {
+    float y = (
+        x * 0.0866 + hist->x[even_t ? 1 : 0] * 0.1733 + hist->x[even_t ? 0 : 1] * 0.0866
+                   + hist->y[even_t ? 1 : 0] * 1.0903 - hist->y[even_t ? 0 : 1] * 0.5266
+    );
+    hist->x[even_t ? 0 : 1] = x;
+    hist->y[even_t ? 0 : 1] = y;
+    return y;
+}
+
 #define cross(a, b) { \
     a[1] * b[2] - a[2] * b[1], \
     a[2] * b[0] - a[0] * b[2], \
@@ -65,9 +85,9 @@ uint8_t i_time;
 #define ACCEL_SCALE (2.f / I16_MAX)
 #define GYRO_SCALE 
 void acquisition_task() {
-    float32_t down[3];
     int16_t acc[3], gyro[3];
     bool first = true;
+    float32_t down[3];
     while (1) {
         imu_events.wait_any(EVT_FRAME_READY);
         for (int axis = 0; axis < 3; axis++) {
@@ -77,8 +97,8 @@ void acquisition_task() {
 
         float W[3];
         for (int axis = 0; axis < 3; axis++) {
-            W[axis] = (250.f / I16_MAX) *  gyro[axis];
-            flip_buffer[flop].gyroscope[axis][i_time] = W[axis];
+            W[axis] = (250.f / I16_MAX) * gyro[axis];
+            flip_buffer[flop].gyroscope[axis][i_time] = low_pass(&gyro_hist[axis], W[axis], i_time & 1);
         }
 
         // Rotate our previous estimation of "down" into the current device orientation
@@ -86,24 +106,31 @@ void acquisition_task() {
             // Convert gyroscope measurements to an axis-angle rotation
             float theta, sin_theta, cos_theta;
             arm_sqrt_f32(W[0] * W[0] + W[1] * W[1] + W[2] * W[2], &theta);
+            // Normalize the axis of rotation
             for (int axis = 0; axis < 3; axis++) {
                 W[axis] /= theta;
             }
-            theta = theta / POLL_RATE;
+            theta = -theta / POLL_RATE;
 
             // Rotate "down" into the current frame of reference
             arm_sin_cos_f32(theta, &sin_theta, &cos_theta);
-            float WxDown[3] = cross(W, down), WxWxDown[3] = cross(W, WxDown);
-            float inv_cos_theta = 1 - cos_theta;
+            float WxDown[3] = cross(W, down);
+            float WoDown;
+            arm_dot_prod_f32(W, down, 3, &WoDown);
             for (int axis = 0; axis < 3; axis++) {
-                down[axis] = down[axis] + sin_theta * WxDown[axis] + inv_cos_theta * WxWxDown[axis];
+                down[axis] = (
+                    down[axis] * cos_theta +
+                    WxDown[axis] * sin_theta +
+                    W[axis] * WoDown * (1 - cos_theta)
+                );
             }
         }
 
         for (int axis = 0; axis < 3; axis++) {
             float raw_value = (  2.f / I16_MAX) * acc[axis];
             if (!first) {
-                flip_buffer[flop].accelerometer[axis][i_time] = raw_value - down[axis];
+                flip_buffer[flop].accelerometer[axis][i_time] = low_pass(&accel_hist[axis], raw_value - down[axis], i_time & 1);
+                // Compensate for drift
                 down[axis] = (1 - GRAVITY_DRIFT_CORRECTION) * down[axis] + GRAVITY_DRIFT_CORRECTION * raw_value;
             } else { // Assume we're stationary the first time we measure
                 flip_buffer[flop].accelerometer[axis][i_time] = 0;
@@ -111,6 +138,21 @@ void acquisition_task() {
             }
         }
         first = false;
+
+        // Normalize gravity to 1g
+        float down_len;
+        arm_sqrt_f32(down[0] * down[0] + down[1] * down[1] + down[2] * down[2], &down_len);
+        for (int axis = 0; axis < 3; axis++) {
+            down[axis] = down[axis] / down_len;
+        }
+
+        #ifdef TELEPLOT
+        // Print in Teleplot format (>name:value)
+        printf(">acc_x:%.3f\n>acc_y:%.3f\n>acc_z:%.3f\n>gyro_x:%.2f\n>gyro_y:%.2f\n>gyro_z:%.2f\n",
+            flip_buffer[flop].accelerometer[0][i_time], flip_buffer[flop].accelerometer[1][i_time], flip_buffer[flop].accelerometer[2][i_time],
+            flip_buffer[flop].gyroscope[0][i_time], flip_buffer[flop].gyroscope[1][i_time], flip_buffer[flop].gyroscope[2][i_time]
+        );
+        #endif
 
         if (i_time < BATCH_SIZE_FILLED) {
             i_time += 1;
@@ -172,8 +214,8 @@ bool init_imu() {
     // polling_rate / 4 = 13Hz
     
     write_reg(CTRL3_C,   0x44); // Block updates, auto-increment address
-    write_reg(CTRL2_G,   0x32); // Gyroscope:     52 Hz, ±250 dps, low pass: [polling_rate / 4]
-    write_reg(CTRL1_XL,  0x32); // Accelerometer: 52 Hz, ±2 g, low pass: [polling_rate / 4]
+    write_reg(CTRL2_G,   0x30); // Gyroscope:     52 Hz, ±250 dps, low pass: [polling_rate / 2]
+    write_reg(CTRL1_XL,  0x30); // Accelerometer: 52 Hz, ±2 g, low pass: [polling_rate / 2]
     write_reg(INT1_CTRL, 0x03); // Route data-ready signal to INT1 pin
     write_reg(DRDY_PULSE_CFG, 0x80); // Enable pulsed data-ready mode (50μs pulses)
 

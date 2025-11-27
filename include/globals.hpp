@@ -8,3 +8,5 @@
 #define FREQUENCY_BIN_SIZE ((float)POLL_RATE / BATCH_SIZE)
 
 #define DEBUG // Enables sanity checks and extra print statements
+
+#define TELEPLOT // Enable print statements for Teleplot

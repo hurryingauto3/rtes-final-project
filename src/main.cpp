@@ -32,6 +32,12 @@ int main() {
       do_fft(imu_data->accelerometer[axis], accelerometer_frequency_magnitudes[axis]);
       do_fft(imu_data->gyroscope[axis], gyroscope_frequency_magnitudes[axis]);
     }
+    #ifdef TELEPLOT
+      // Print in Teleplot format (>name:value)
+      printf(">4hz_x:%.3f\n>4hz_y:%.3f\n>4hz_z:%.3f\n",
+        accelerometer_frequency_magnitudes[0][20], accelerometer_frequency_magnitudes[1][20], accelerometer_frequency_magnitudes[2][20]
+      );
+      #endif
   }
 
   return 0;
