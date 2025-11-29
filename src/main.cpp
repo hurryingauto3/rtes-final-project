@@ -2,6 +2,7 @@
 
 #include "globals.hpp"
 #include "ingest.hpp"
+#include "conditioning.hpp"
 
 int main() {
   static BufferedSerial pc(USBTX, USBRX, 115200);

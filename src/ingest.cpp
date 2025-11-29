@@ -1,4 +1,5 @@
 #include "ingest.hpp"
+#include "conditioning.hpp"
 
 #include "arm_math.h"
 
@@ -8,7 +9,7 @@
 
 I2C i2c(PB_11, PB_10);
 
-//MARK: Utility functions
+//MARK: Communication utilities
 
 // Read a single-byte register
 bool read_reg(uint8_t reg, uint8_t &value) {
@@ -37,7 +38,88 @@ bool read_int16(uint8_t reg_low, int16_t &val) {
     return true;
 }
 
-// MARK: Runtime
+// MARK: Math functions
+
+/** Produce rotational derivatives that move the quaternion's local axis towards the given vector.
+ * Assumes acceleration and rot are both normalized.
+ */
+void accel_right(float accel_norm[3], float rot[4], float dest[3]) {
+    // Get the global down vector in local space
+    float local_z[3] = {
+        2.f * (rot[3] * rot[1] + rot[0] * -rot[2]),
+        2.f * (rot[3] * rot[2] + rot[0] * rot[1]),
+        2.f * rot[3] * rot[3] + rot[0] * rot[0] - (rot[1] * rot[1] + rot[2] * rot[2] + rot[3] * rot[3])
+    };
+    // Generate a local-space rotational derivative that brings the two closer
+    // Since ||cross(a, b)|| = sin(theta) and sin(theta) < theta let's just use that!
+    cross(accel_norm, local_z, dest);
+}
+
+/** Approximately apply a rotational derivative to a quaternion. Dest may be rot.
+ * @cite https://www.st.com/resource/en/design_tip/dt0060-exploiting-the-gyroscope-to-update-tilt-measurement-and-ecompass-stmicroelectronics.pdf
+ * @param deriv Rotational derivative
+*/
+void rotate_quaternion(float deriv[3], float rot[4], float dest[4]) {
+    float rot_prime[4] = {
+        rot[0] + (- rot[1] * deriv[0] - rot[2] * deriv[1] - rot[3] * deriv[2]) / 2.f,
+        rot[1] + (+ rot[0] * deriv[0] - rot[3] * deriv[1] + rot[2] * deriv[2]) / 2.f,
+        rot[2] + (+ rot[3] * deriv[0] + rot[0] * deriv[1] - rot[1] * deriv[2]) / 2.f,
+        rot[3] + (- rot[2] * deriv[0] + rot[1] * deriv[1] + rot[0] * deriv[2]) / 2.f
+    };
+    float len;
+    arm_sqrt_f32(rot_prime[0] * rot_prime[0] + rot_prime[1] * rot_prime[1] + rot_prime[2] * rot_prime[2] + rot_prime[3] * rot_prime[3], &len);
+    for (int axis = 0; axis < 4; axis++) {
+        dest[axis] = rot_prime[axis] / len;
+    }
+}
+
+
+/** Rotate a vector using a quaternion. Dest may be vec.
+ *  @cite: https://gamedev.stackexchange.com/questions/28395/rotating-vector3-by-a-quaternion
+ */
+void rotate_vector(const float vec[3], float rot[4], float dest[3]) {
+    float u_fac, v_fac, ortho_fac, rot_ortho[3];
+
+    u_fac = 2.f * (vec[0] * rot[1] + vec[1] * rot[2] + vec[2] * rot[3]);
+
+    v_fac = rot[0] * rot[0] - (rot[1] * rot[1] + rot[2] * rot[2] + rot[3] * rot[3]);
+
+    ortho_fac = 2.f * rot[0];
+    cross(&rot[1], vec, rot_ortho);
+
+    for (int axis = 0; axis < 3; axis++) {
+        dest[axis] = (
+            u_fac * rot[axis + 1]
+            + v_fac * vec[axis]
+            + ortho_fac * rot_ortho[axis]
+        );
+    }
+}
+
+void update_rot(float accel[3], float gyro[3], float rot[4]) {
+    float
+        accel_len, accel_norm[3], righting_deriv[3],
+        rot_deriv[3] = {
+            gyro[0] * (PI / (180 * POLL_RATE)),
+            gyro[1] * (PI / (180 * POLL_RATE)),
+            gyro[2] * (PI / (180 * POLL_RATE))};
+
+    arm_sqrt_f32(accel[0] * accel[0] + accel[1] * accel[1] + accel[2] * accel[2], &accel_len);
+    for (int axis = 0; axis < 3; axis++) { accel_norm[axis] = accel[axis] / accel_len; }
+
+    accel_right(accel_norm, rot, righting_deriv);
+
+    // Perform less correction when we know we're moving
+    float accel_confidence = (accel_len - 1);
+    accel_confidence = GRAVITY_UPDATE_RATE / (1 + MOTION_SENSITIVITY * accel_confidence * accel_confidence);
+    for (int axis = 0; axis < 3; axis++) {
+        rot_deriv[axis] += righting_deriv[axis] * accel_confidence;
+    }
+
+    rotate_quaternion(rot_deriv, rot, rot);
+}
+
+// MARK: Main loop
 
 #define OUTX_L_G   0x22 // Gyroscope X-axis low byte start address
 #define OUTX_L_XL  0x28 // Accelerometer X-axis low byte start address
@@ -55,102 +137,43 @@ IMUBatch flip_buffer[2];
 bool flop;
 uint8_t i_time;
 
-// Chebyshev-I low pass
-// n=2, 2db pass-band ripple, 7hz cutoff
-struct LowPass {
-    float32_t x[2];
-    float32_t y[2];
-};
-
-LowPass accel_hist[3];
-LowPass gyro_hist[3];
-
-float32_t low_pass(LowPass *hist, float32_t x, bool even_t) {
-    float y = (
-        x * 0.0866 + hist->x[even_t ? 1 : 0] * 0.1733 + hist->x[even_t ? 0 : 1] * 0.0866
-                   + hist->y[even_t ? 1 : 0] * 1.0903 - hist->y[even_t ? 0 : 1] * 0.5266
-    );
-    hist->x[even_t ? 0 : 1] = x;
-    hist->y[even_t ? 0 : 1] = y;
-    return y;
-}
-
-#define cross(a, b) { \
-    a[1] * b[2] - a[2] * b[1], \
-    a[2] * b[0] - a[0] * b[2], \
-    a[0] * b[1] - a[1] * b[0]  \
-}
-
 #define I16_MAX 32767
 #define ACCEL_SCALE (2.f / I16_MAX)
 #define GYRO_SCALE 
 void acquisition_task() {
-    int16_t acc[3], gyro[3];
-    bool first = true;
-    float32_t down[3];
+    float acc_f[3], gyro_f[3];
+    float rot[4] = { 1, 0, 0, 0 }; // A quaternion that converts the imu-relative frame of reference to a "global" frame of reference
+    FilterHistory2 acc_hist[3], gyro_hist[3]; // Low pass history
     while (1) {
         imu_events.wait_any(EVT_FRAME_READY);
         for (int axis = 0; axis < 3; axis++) {
-            read_int16(OUTX_L_XL + 2*axis, acc[axis]);
-            read_int16(OUTX_L_G  + 2*axis, gyro[axis]);
+            int16_t data;
+            read_int16(OUTX_L_XL + 2*axis, data);
+            acc_f[axis]  = data  * (  2.f / I16_MAX);
+            read_int16(OUTX_L_G  + 2*axis, data);
+            gyro_f[axis] = data * (250.f / I16_MAX);
         }
 
-        float W[3];
-        for (int axis = 0; axis < 3; axis++) {
-            W[axis] = (250.f / I16_MAX) * gyro[axis];
-            flip_buffer[flop].gyroscope[axis][i_time] = low_pass(&gyro_hist[axis], W[axis], i_time & 1);
-        }
+        update_rot(acc_f, gyro_f, rot);
 
-        // Rotate our previous estimation of "down" into the current device orientation
-        if (!first) {
-            // Convert gyroscope measurements to an axis-angle rotation
-            float theta, sin_theta, cos_theta;
-            arm_sqrt_f32(W[0] * W[0] + W[1] * W[1] + W[2] * W[2], &theta);
-            // Normalize the axis of rotation
-            for (int axis = 0; axis < 3; axis++) {
-                W[axis] /= theta;
-            }
-            theta = -theta / POLL_RATE;
-
-            // Rotate "down" into the current frame of reference
-            arm_sin_cos_f32(theta, &sin_theta, &cos_theta);
-            float WxDown[3] = cross(W, down);
-            float WoDown;
-            arm_dot_prod_f32(W, down, 3, &WoDown);
-            for (int axis = 0; axis < 3; axis++) {
-                down[axis] = (
-                    down[axis] * cos_theta +
-                    WxDown[axis] * sin_theta +
-                    W[axis] * WoDown * (1 - cos_theta)
-                );
-            }
-        }
+        rotate_vector(acc_f, rot, acc_f);
+        acc_f[2] -= 1;
 
         for (int axis = 0; axis < 3; axis++) {
-            float raw_value = (  2.f / I16_MAX) * acc[axis];
-            if (!first) {
-                flip_buffer[flop].accelerometer[axis][i_time] = low_pass(&accel_hist[axis], raw_value - down[axis], i_time & 1);
-                // Compensate for drift
-                down[axis] = (1 - GRAVITY_DRIFT_CORRECTION) * down[axis] + GRAVITY_DRIFT_CORRECTION * raw_value;
-            } else { // Assume we're stationary the first time we measure
-                flip_buffer[flop].accelerometer[axis][i_time] = 0;
-                down[axis] = raw_value;
-            }
-        }
-        first = false;
-
-        // Normalize gravity to 1g
-        float down_len;
-        arm_sqrt_f32(down[0] * down[0] + down[1] * down[1] + down[2] * down[2], &down_len);
-        for (int axis = 0; axis < 3; axis++) {
-            down[axis] = down[axis] / down_len;
+            lowpass(&acc_f[axis], &acc_hist[axis], 1, i_time & 1, &flip_buffer[flop].accelerometer[axis][i_time]);
+            lowpass(&gyro_f[axis], &gyro_hist[axis], 1, i_time & 1, &flip_buffer[flop].gyroscope[axis][i_time]);
         }
 
         #ifdef TELEPLOT
         // Print in Teleplot format (>name:value)
-        printf(">acc_x:%.3f\n>acc_y:%.3f\n>acc_z:%.3f\n>gyro_x:%.2f\n>gyro_y:%.2f\n>gyro_z:%.2f\n",
-            flip_buffer[flop].accelerometer[0][i_time], flip_buffer[flop].accelerometer[1][i_time], flip_buffer[flop].accelerometer[2][i_time],
-            flip_buffer[flop].gyroscope[0][i_time], flip_buffer[flop].gyroscope[1][i_time], flip_buffer[flop].gyroscope[2][i_time]
+        // printf(">acc_x:%.3f\n>acc_y:%.3f\n>acc_z:%.3f\n>gyro_x:%.2f\n>gyro_y:%.2f\n>gyro_z:%.2f\n",
+        //     flip_buffer[flop].accelerometer[0][i_time], flip_buffer[flop].accelerometer[1][i_time], flip_buffer[flop].accelerometer[2][i_time],
+        //     flip_buffer[flop].gyroscope[0][i_time], flip_buffer[flop].gyroscope[1][i_time], flip_buffer[flop].gyroscope[2][i_time]
+        // );
+        printf(">acc_x:%3f\n>acc_y:%3f\n>acc_z:%3f\n",
+            flip_buffer[flop].accelerometer[0][i_time],
+            flip_buffer[flop].accelerometer[1][i_time],
+            flip_buffer[flop].accelerometer[2][i_time]
         );
         #endif
 
@@ -232,22 +255,4 @@ bool init_imu() {
     int1.rise(&data_ready_isr);
 
     return true;
-}
-
-// MARK: FFT
-
-arm_rfft_fast_instance_f32 fft_instance;
-float32_t complex_fft_coefficients[BATCH_SIZE * 2];
-
-void init_fft() {
-    arm_rfft_fast_init_f32(&fft_instance, BATCH_SIZE);
-}
-
-void do_fft(float data[BATCH_SIZE], float frequency_magnitudes[BATCH_SIZE / 2 + 1]) {
-  arm_rfft_fast_f32(&fft_instance, data, complex_fft_coefficients, 0);
-  arm_cmplx_mag_f32(
-    complex_fft_coefficients,
-    frequency_magnitudes,
-    BATCH_SIZE / 2 + 1
-  );
 }
