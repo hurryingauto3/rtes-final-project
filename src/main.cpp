@@ -3,9 +3,19 @@
 #include "globals.hpp"
 #include "ingest.hpp"
 #include "conditioning.hpp"
+#include "ble_handler.hpp"
+
+// BLE Objects
+static events::EventQueue ble_event_queue(16 * EVENTS_EVENT_SIZE);
+static Thread ble_thread;
+static ParkinsonBLE ble_handler(ble_event_queue);
 
 int main() {
   static BufferedSerial pc(USBTX, USBRX, 115200);
+
+  // Start BLE Thread
+  ble_thread.start(callback(&ble_event_queue, &events::EventQueue::dispatch_forever));
+  ble_handler.init();
 
   #ifdef DEBUG
   if (!init_imu()) {
@@ -33,6 +43,17 @@ int main() {
       do_fft(imu_data->accelerometer[axis], accelerometer_frequency_magnitudes[axis]);
       do_fft(imu_data->gyroscope[axis], gyroscope_frequency_magnitudes[axis]);
     }
+
+    // TODO: Calculate these values based on your FFT analysis
+    float tremor_intensity = 0.0f; 
+    float dyskinesia_intensity = 0.0f;
+    float fog_intensity = 0.0f;
+
+    // Update BLE characteristics
+    ble_handler.updateTremor(tremor_intensity);
+    ble_handler.updateDyskinesia(dyskinesia_intensity);
+    ble_handler.updateFreezingGait(fog_intensity);
+
     #ifdef TELEPLOT
       // Print in Teleplot format (>name:value)
       printf(">4hz_x:%.3f\n>4hz_y:%.3f\n>4hz_z:%.3f\n",
