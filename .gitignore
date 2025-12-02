@@ -7,6 +7,7 @@ cache
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+.vscode/
 
 # Mac OS
 .DS_Store/

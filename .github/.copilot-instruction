@@ -1,0 +1,30 @@
+# .copilot-instructions
+
+# Project Purpose
+This is an embedded systems project for the STM32L475VG (B-L475E-IOT01A Discovery Kit) using Mbed OS. It samples IMU data (accelerometer + gyroscope) at 52 Hz, detects Parkinson's-related movement patterns (tremors, dyskinesia, and freezing of gait), and performs real-time frequency analysis using CMSIS-DSP FFT. Data is visualized via Teleplot and transmitted over BLE.
+
+# Project Structure
+- `src/ingest.cpp`: Sensor acquisition thread. Uses I2C to read LSM6DSL. Performs quaternion-based orientation update. Polls at 52 Hz.
+- `src/conditioning.cpp`: Uses CMSIS-DSP to perform `arm_rfft_fast_f32` FFT on buffered sensor data. Exposes `do_fft()` function.
+- `src/main.cpp`: System entry point. Starts acquisition, processes full sensor batches (256 samples), runs FFTs on all 6 axes, outputs frequency bins over serial.
+- `include/globals.hpp`: Constants like `POLL_RATE`, `BATCH_SIZE`, shared buffers.
+- `platformio.ini`: PlatformIO config for `disco_l475vg_iot01a` with `mbed`, `-DARM_MATH_CM4`.
+- `mbed_app.json`: Mbed RTOS configuration (if present).
+
+# Data Flow
+1. `Ingest.cpp` polls IMU into buffer.
+2. When buffer is full (256 samples), `main.cpp` runs `do_fft()` from `conditioning.cpp`.
+3. Extracts amplitude in target frequency bands (3–7 Hz).
+4. Results sent to serial (Teleplot) or over BLE (planned).
+
+# Copilot Tasks
+- Suggest refactors or buffer handling improvements in `ingest.cpp`.
+- Optimize `do_fft()` logic or add windowing (e.g., Hanning) before FFT.
+- Generate Teleplot-compatible serial output lines (e.g., `plot(tremor, value)`).
+- Implement BLE characteristic logic (3 characteristics for tremor, dyskinesia, FOG).
+- Help add moving average or low-pass filter before FFT.
+- Auto-generate FFT bin mapping functions (e.g., map 4Hz to bin index).
+- Suggest FSM or event system for condition detection.
+- Help write LED or button control code on board.
+- Ensure all DSP operations use CMSIS float32 APIs (`arm_math.h`).
+- Assist in converting frequency domain output to detection flags.
