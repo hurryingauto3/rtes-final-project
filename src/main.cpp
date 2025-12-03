@@ -45,7 +45,7 @@ int main() {
     }
 
     // TODO: Calculate these values based on your FFT analysis
-    float tremor_intensity = 0.0f; 
+    float tremor_intensity = detect_tremor(accelerometer_frequency_magnitudes);
     float dyskinesia_intensity = 0.0f;
     float fog_intensity = 0.0f;
 
@@ -56,8 +56,8 @@ int main() {
 
     #ifdef TELEPLOT
       // Print in Teleplot format (>name:value)
-      printf(">4hz_x:%.3f\n>4hz_y:%.3f\n>4hz_z:%.3f\n",
-        accelerometer_frequency_magnitudes[0][20], accelerometer_frequency_magnitudes[1][20], accelerometer_frequency_magnitudes[2][20]
+      printf(">tremor_intensity:%.3f\n>dyskinesia_intensity:%.3f\n>fog_intensity:%.3f\n",
+        tremor_intensity, dyskinesia_intensity, fog_intensity
       );
       #endif
   }

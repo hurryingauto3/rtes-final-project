@@ -48,3 +48,32 @@ static void cross(const float a[3], const float b[3], float dest[3]) {
     dest[1] = a[2] * b[0] - a[0] * b[2];
     dest[2] = a[0] * b[1] - a[1] * b[0];
 }
+
+//Parkinson's Disease Detection
+
+/** Calculate tremor intensity in the 3-5 Hz frequency range from accelerometer data.
+ * Sums frequency magnitudes across all 3 axes in the tremor band and normalizes.
+ * @param accel_freq_mags Array of 3 frequency magnitude arrays (one per axis)
+ * @return Tremor intensity value (0.0 = no tremor, higher values = more intense)
+ */
+static float detect_tremor(float accel_freq_mags[3][BATCH_SIZE / 2 + 1]) {
+    // Frequency bin calculation: bin_size = POLL_RATE / BATCH_SIZE = 52/256 ≈ 0.203 Hz/bin
+    // 3 Hz → bin ~15, 5 Hz → bin ~25
+    int bin_3hz = (int)(3.0f / FREQUENCY_BIN_SIZE);
+    int bin_5hz = (int)(5.0f / FREQUENCY_BIN_SIZE);
+    
+    float tremor_power = 0.0f;
+    
+    // Sum magnitude across frequency range and all 3 axes
+    for (int axis = 0; axis < 3; axis++) {
+        for (int bin = bin_3hz; bin <= bin_5hz; bin++) {
+            tremor_power += accel_freq_mags[axis][bin];
+        }
+    }
+    
+    // Normalize by number of bins and axes for consistent intensity metric
+    int num_bins = (bin_5hz - bin_3hz + 1) * 3;
+    float intensity = tremor_power / num_bins;
+    
+    return intensity;
+}
