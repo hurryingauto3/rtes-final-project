@@ -47,7 +47,9 @@ int main() {
     // TODO: Calculate these values based on your FFT analysis
     float tremor_intensity = detect_tremor(accelerometer_frequency_magnitudes);
     float dyskinesia_intensity = 0.0f;
-    float fog_intensity = 0.0f;
+    // Freezing-of-Gait detection using time-domain accelerometer data.
+    float fog_intensity = detect_freezing(imu_data->accelerometer);
+
 
     // Update BLE characteristics
     ble_handler.updateTremor(tremor_intensity);

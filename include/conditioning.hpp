@@ -77,3 +77,54 @@ static float detect_tremor(float accel_freq_mags[3][BATCH_SIZE / 2 + 1]) {
     
     return intensity;
 }
+// Freezing-of-Gait detection (time-domain)
+/**
+ * Estimate FOG intensity from time-domain accelerometer data.
+ *
+ * The accel_time input should already be in the global frame, low-pass filtered,
+ * and gravity-compensated (matching how IMUBatch.accelerometer is set up).
+ *
+ * Basic idea: normal walking shows larger, varying dynamic acceleration. During
+ * a freeze, acceleration stays near zero for most of the batch. We count how many
+ * samples fall below a small threshold and turn that into a 0-1 intensity score.
+ *
+ * @param accel_time 3xBATCH_SIZE array of filtered accel samples (gravity removed)
+ * @return FOG intensity [0.0, 1.0] where higher means longer low-motion period
+ */
+static float detect_freezing(const float accel_time[3][BATCH_SIZE]) {
+    // Threshold for "very low" dynamic acceleration (in g units).
+    // This can be tuned empirically using recorded data.
+    const float LOW_ACTIVITY_THRESHOLD = 0.05f;
+
+    int low_activity_count = 0;
+
+    // Use only the filled portion of the batch to avoid counting zero-padded
+    // samples as artificial "freezes".
+    const int N = BATCH_SIZE_FILLED;
+
+    for (int t = 0; t < N; ++t) {
+        float ax = accel_time[0][t];
+        float ay = accel_time[1][t];
+        float az = accel_time[2][t];
+
+        // Since gravity has already been subtracted (see ingestion),
+        // the magnitude itself represents dynamic motion.
+        float mag = sqrtf(ax * ax + ay * ay + az * az);
+
+        if (mag < LOW_ACTIVITY_THRESHOLD) {
+            low_activity_count += 1;
+        }
+    }
+
+    // Convert to a fraction in [0, 1].
+    float intensity = 0.0f;
+    if (N > 0) {
+        intensity = (float)low_activity_count / (float)N;
+    }
+
+    // Clamp to the valid range.
+    if (intensity < 0.0f) intensity = 0.0f;
+    if (intensity > 1.0f) intensity = 1.0f;
+
+    return intensity;
+}
