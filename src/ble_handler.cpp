@@ -1,5 +1,6 @@
 #include "ble_handler.hpp"
 #include "mbed.h"
+#include "globals.hpp"
 
 void ParkinsonBLE::init() {
     _ble.onEventsToProcess(makeFunctionPointer(this, &ParkinsonBLE::schedule_ble_events));
@@ -9,17 +10,19 @@ void ParkinsonBLE::init() {
 
 void ParkinsonBLE::on_init_complete(ble::BLE::InitializationCompleteCallbackContext *params) {
     if (params->error != BLE_ERROR_NONE) {
+        #ifdef DEBUG
         printf("BLE initialization failed.\n");
+        #endif
         return;
     }
 
+    #ifdef DEBUG
     printf("BLE initialized.\n");
+    #endif
 
-    // Ensure we are using the default instance
     ble::BLE &ble = params->ble;
     ble.gap().setEventHandler(this);
 
-    // Create the service
     GattCharacteristic *charTable[] = {&_tremor_char, &_dyskinesia_char, &_fog_char};
     GattService parkinsonService(
         UUID(PARKINSON_SERVICE_UUID),
@@ -29,7 +32,6 @@ void ParkinsonBLE::on_init_complete(ble::BLE::InitializationCompleteCallbackCont
 
     ble.gattServer().addService(parkinsonService);
 
-    // Store handles for updates
     _tremor_handle = _tremor_char.getValueHandle();
     _dyskinesia_handle = _dyskinesia_char.getValueHandle();
     _fog_handle = _fog_char.getValueHandle();
@@ -53,7 +55,9 @@ void ParkinsonBLE::start_advertising() {
     );
 
     if (error) {
+        #ifdef DEBUG
         printf("BLE: _ble.gap().setAdvertisingParameters() failed\n");
+        #endif
         return;
     }
 
@@ -63,18 +67,24 @@ void ParkinsonBLE::start_advertising() {
     );
 
     if (error) {
+        #ifdef DEBUG
         printf("BLE: _ble.gap().setAdvertisingPayload() failed\n");
+        #endif
         return;
     }
 
     error = _ble.gap().startAdvertising(ble::LEGACY_ADVERTISING_HANDLE);
 
     if (error) {
+        #ifdef DEBUG
         printf("BLE: _ble.gap().startAdvertising() failed\n");
+        #endif
         return;
     }
 
+    #ifdef DEBUG
     printf("BLE: Advertising started.\n");
+    #endif
 }
 
 void ParkinsonBLE::schedule_ble_events(BLE::OnEventsToProcessCallbackContext *context) {
@@ -82,15 +92,19 @@ void ParkinsonBLE::schedule_ble_events(BLE::OnEventsToProcessCallbackContext *co
 }
 
 void ParkinsonBLE::onConnectionComplete(const ble::ConnectionCompleteEvent &event) {
+    #ifdef DEBUG
     if (event.getStatus() == BLE_ERROR_NONE) {
         printf("BLE: Connected to %02x:%02x:%02x:%02x:%02x:%02x\n",
                event.getPeerAddress()[5], event.getPeerAddress()[4], event.getPeerAddress()[3],
                event.getPeerAddress()[2], event.getPeerAddress()[1], event.getPeerAddress()[0]);
     }
+    #endif
 }
 
 void ParkinsonBLE::onDisconnectionComplete(const ble::DisconnectionCompleteEvent &event) {
+    #ifdef DEBUG
     printf("BLE: Disconnected. Reason: %d\n", event.getReason());
+    #endif
     start_advertising();
 }
 

@@ -3,6 +3,7 @@
 #include "ble/BLE.h"
 #include "ble/Gap.h"
 #include "events/mbed_events.h"
+#include "globals.hpp"
 
 // UUIDs for the Service and Characteristics
 // You can generate your own UUIDs, these are placeholders
@@ -18,86 +19,66 @@ public:
         _ble(ble::BLE::Instance()),
         _tremor_char(
             UUID(TREMOR_CHAR_UUID),
-            &_tremor_value,
+            (uint8_t *)&_tremor_value,
+            sizeof(float),
+            sizeof(float),
             GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_NOTIFY | GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_READ
         ),
         _dyskinesia_char(
             UUID(DYSKINESIA_CHAR_UUID),
-            &_dyskinesia_value,
+            (uint8_t *)&_dyskinesia_value,
+            sizeof(float),
+            sizeof(float),
             GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_NOTIFY | GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_READ
         ),
         _fog_char(
             UUID(FOG_CHAR_UUID),
-            &_fog_value,
+            (uint8_t *)&_fog_value,
+            sizeof(float),
+            sizeof(float),
             GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_NOTIFY | GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_READ
         ),
-        _adv_data_builder(_adv_buffer)
+        _adv_data_builder(_adv_buffer, sizeof(_adv_buffer))
     {
     }
 
     ~ParkinsonBLE() {}
 
-    /**
-     * Initialize the BLE interface
-     */
     void init();
 
-    /**
-     * Update the Tremor intensity value
-     * @param value Intensity of the tremor (e.g., magnitude)
-     */
     void updateTremor(float value);
 
-    /**
-     * Update the Dyskinesia intensity value
-     * @param value Intensity of the dyskinesia
-     */
     void updateDyskinesia(float value);
 
-    /**
-     * Update the Freezing of Gait (FOG) status/intensity
-     * @param value Intensity or status of FOG
-     */
     void updateFreezingGait(float value);
 
 private:
 
-// Callback when BLE is initialized
     void on_init_complete(ble::BLE::InitializationCompleteCallbackContext *params);
 
-    // Start advertising
     void start_advertising();
 
-    // Handle BLE events
     void schedule_ble_events(BLE::OnEventsToProcessCallbackContext *context);
 
-    // Gap::EventHandler implementation
     void onConnectionComplete(const ble::ConnectionCompleteEvent &event) override;
+    
     void onDisconnectionComplete(const ble::DisconnectionCompleteEvent &event) override;
 
 private:
     events::EventQueue &_event_queue;
     ble::BLE &_ble;
 
-    // Characteristic Values
     float _tremor_value = 0.0f;
     float _dyskinesia_value = 0.0f;
     float _fog_value = 0.0f;
 
-    // GATT Characteristics
-    // We use ReadOnlyGattCharacteristic or ReadWriteGattCharacteristic. 
-    // Since we only update from device, ReadOnly (with Notify) is appropriate for the client side, 
-    // but we need to write to it from the server side. 
-    // GattCharacteristic is the base.
     GattCharacteristic _tremor_char;
     GattCharacteristic _dyskinesia_char;
     GattCharacteristic _fog_char;
 
-    // Advertising buffer
     uint8_t _adv_buffer[ble::LEGACY_ADVERTISING_MAX_SIZE];
     ble::AdvertisingDataBuilder _adv_data_builder;
 
-    // Handle for the service
     GattAttribute::Handle_t _tremor_handle = 0;
     GattAttribute::Handle_t _dyskinesia_handle = 0;
     GattAttribute::Handle_t _fog_handle = 0;
