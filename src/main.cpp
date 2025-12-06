@@ -44,11 +44,11 @@ int main() {
       do_fft(imu_data->gyroscope[axis], gyroscope_frequency_magnitudes[axis]);
     }
 
-    // TODO: Calculate these values based on your FFT analysis
+    // Calculate Parkinson's symptom intensities
     float tremor_intensity = detect_tremor(accelerometer_frequency_magnitudes);
-    float dyskinesia_intensity = 0.0f;
-    // Freezing-of-Gait detection using time-domain accelerometer data.
-    float fog_intensity = detect_freezing(imu_data->accelerometer);
+    float dyskinesia_intensity = detect_dyskinesia(accelerometer_frequency_magnitudes);
+    // FOG detection requires both time and frequency domain
+    float fog_intensity = detect_freezing(imu_data->accelerometer, accelerometer_frequency_magnitudes);
 
 
     // Update BLE characteristics

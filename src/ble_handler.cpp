@@ -47,7 +47,10 @@ void ParkinsonBLE::start_advertising() {
 
     _adv_data_builder.setFlags();
     _adv_data_builder.setName("ParkinsonMonitor");
-    _adv_data_builder.setLocalServiceList(mbed::make_Span(&PARKINSON_SERVICE_UUID, 1));
+    
+    // Add service UUID to advertising data
+    UUID service_uuid(PARKINSON_SERVICE_UUID);
+    _adv_data_builder.setLocalServiceList(mbed::make_Span(&service_uuid, 1));
 
     ble_error_t error = _ble.gap().setAdvertisingParameters(
         ble::LEGACY_ADVERTISING_HANDLE,
@@ -103,7 +106,7 @@ void ParkinsonBLE::onConnectionComplete(const ble::ConnectionCompleteEvent &even
 
 void ParkinsonBLE::onDisconnectionComplete(const ble::DisconnectionCompleteEvent &event) {
     #ifdef DEBUG
-    printf("BLE: Disconnected. Reason: %d\n", event.getReason());
+    printf("BLE: Disconnected. Reason: %u\n", event.getReason().value());
     #endif
     start_advertising();
 }
