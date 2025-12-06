@@ -9,4 +9,4 @@
 
 #define DEBUG // Enables sanity checks and extra print statements
 
-#define TELEPLOT // Enable print statements for Teleplot
+// #define TELEPLOT // Enable print statements for Teleplot

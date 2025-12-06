@@ -50,9 +50,13 @@ int main() {
       do_fft(imu_data->gyroscope[axis], gyroscope_frequency_magnitudes[axis]);
     }
 
+    float total_energy = calc_total_energy(accelerometer_frequency_magnitudes);
+
     // Calculate Parkinson's symptom intensities
-    float tremor_intensity = detect_tremor(accelerometer_frequency_magnitudes);
-    float dyskinesia_intensity = detect_dyskinesia(accelerometer_frequency_magnitudes);
+    float tremor_intensity = detect_tremor(accelerometer_frequency_magnitudes) / total_energy;
+    //tremor_intensity = tremor_intensity / (1.0 + abs(tremor_intensity));
+    
+    float dyskinesia_intensity = detect_dyskinesia(accelerometer_frequency_magnitudes) / total_energy;
     // FOG detection requires both time and frequency domain
     float fog_intensity = detect_freezing(imu_data->accelerometer, accelerometer_frequency_magnitudes);
 

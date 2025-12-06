@@ -49,6 +49,19 @@ static void cross(const float a[3], const float b[3], float dest[3]) {
     dest[2] = a[0] * b[1] - a[1] * b[0];
 }
 
+static float calc_total_energy(float accel_freq_mags[3][BATCH_SIZE / 2 + 1]) {
+    float total[3] = { 0.f, 0.f, 0.f };
+    for (int axis = 0; axis < 3; axis++) {
+        for (int bin = 0; bin < BATCH_SIZE / 2 + 1; bin++) {
+            total[axis] += accel_freq_mags[axis][bin];
+        }
+    }
+    // Equivalent to Euclidean length
+    float ret;
+    arm_sqrt_f32(total[0] * total[0] + total[1] * total[1] + total[2] * total[2], &ret);
+    return ret;
+}
+
 //Parkinson's Disease Detection
 
 /** Calculate tremor intensity in the 3-5 Hz frequency range from accelerometer data.
@@ -72,10 +85,10 @@ static float detect_tremor(float accel_freq_mags[3][BATCH_SIZE / 2 + 1]) {
     }
     
     // Normalize by number of bins and axes for consistent intensity metric
-    int num_bins = (bin_5hz - bin_3hz + 1) * 3;
-    float intensity = tremor_power / num_bins;
+    //int num_bins = (bin_5hz - bin_3hz + 1) * 3;
+    //float intensity = tremor_power;
     
-    return intensity;
+    return tremor_power;
 }
 
 /** Calculate dyskinesia intensity in the 5-7 Hz frequency range from accelerometer data.
@@ -99,10 +112,10 @@ static float detect_dyskinesia(float accel_freq_mags[3][BATCH_SIZE / 2 + 1]) {
     }
     
     // Normalize by number of bins and axes for consistent intensity metric
-    int num_bins = (bin_7hz - bin_5hz + 1) * 3;
-    float intensity = dyskinesia_power / num_bins;
+    // int num_bins = (bin_7hz - bin_5hz + 1) * 3;
+    // float intensity = dyskinesia_power / num_bins;
     
-    return intensity;
+    return dyskinesia_power;
 }
 
 // Freezing-of-Gait detection (time-domain + state tracking)
