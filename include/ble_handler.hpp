@@ -7,10 +7,10 @@
 
 // UUIDs for the Service and Characteristics
 // You can generate your own UUIDs, these are placeholders
-const char* PARKINSON_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
-const char* TREMOR_CHAR_UUID       = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
-const char* DYSKINESIA_CHAR_UUID   = "825eef3b-e10c-4a60-9b9c-f929c1e997b9";
-const char* FOG_CHAR_UUID          = "c7333083-b830-4542-97c3-07027f51f404";
+inline constexpr const char* PARKINSON_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+inline constexpr const char* TREMOR_CHAR_UUID       = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+inline constexpr const char* DYSKINESIA_CHAR_UUID   = "825eef3b-e10c-4a60-9b9c-f929c1e997b9";
+inline constexpr const char* FOG_CHAR_UUID          = "c7333083-b830-4542-97c3-07027f51f404";
 
 class ParkinsonBLE : private mbed::NonCopyable<ParkinsonBLE>, public ble::Gap::EventHandler {
 public:

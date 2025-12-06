@@ -3,19 +3,25 @@
 #include "globals.hpp"
 #include "ingest.hpp"
 #include "conditioning.hpp"
-#include "ble_handler.hpp"
+#include "output_handler.hpp"
 
-// BLE Objects
+// Output handler - works with or without BLE
+#if USE_BLE_OUTPUT
 static events::EventQueue ble_event_queue(16 * EVENTS_EVENT_SIZE);
 static Thread ble_thread;
-static ParkinsonBLE ble_handler(ble_event_queue);
+static OutputHandler output_handler(ble_event_queue);
+#else
+static OutputHandler output_handler;
+#endif
 
 int main() {
   static BufferedSerial pc(USBTX, USBRX, 115200);
 
-  // Start BLE Thread
+  // Initialize output (BLE or Serial)
+#if USE_BLE_OUTPUT
   ble_thread.start(callback(&ble_event_queue, &events::EventQueue::dispatch_forever));
-  ble_handler.init();
+#endif
+  output_handler.init();
 
   #ifdef DEBUG
   if (!init_imu()) {
@@ -51,10 +57,10 @@ int main() {
     float fog_intensity = detect_freezing(imu_data->accelerometer, accelerometer_frequency_magnitudes);
 
 
-    // Update BLE characteristics
-    ble_handler.updateTremor(tremor_intensity);
-    ble_handler.updateDyskinesia(dyskinesia_intensity);
-    ble_handler.updateFreezingGait(fog_intensity);
+    // Send data via BLE and/or Serial
+    output_handler.sendTremor(tremor_intensity);
+    output_handler.sendDyskinesia(dyskinesia_intensity);
+    output_handler.sendFreezingGait(fog_intensity);
 
     #ifdef TELEPLOT
       // Print in Teleplot format (>name:value)
