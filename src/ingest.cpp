@@ -170,11 +170,11 @@ void acquisition_task() {
         //     flip_buffer[flop].accelerometer[0][i_time], flip_buffer[flop].accelerometer[1][i_time], flip_buffer[flop].accelerometer[2][i_time],
         //     flip_buffer[flop].gyroscope[0][i_time], flip_buffer[flop].gyroscope[1][i_time], flip_buffer[flop].gyroscope[2][i_time]
         // );
-        printf(">acc_x:%3f\n>acc_y:%3f\n>acc_z:%3f\n",
-            flip_buffer[flop].accelerometer[0][i_time],
-            flip_buffer[flop].accelerometer[1][i_time],
-            flip_buffer[flop].accelerometer[2][i_time]
-        );
+        // printf(">acc_x:%3f\n>acc_y:%3f\n>acc_z:%3f\n",
+        //     flip_buffer[flop].accelerometer[0][i_time],
+        //     flip_buffer[flop].accelerometer[1][i_time],
+        //     flip_buffer[flop].accelerometer[2][i_time]
+        // );
         #endif
 
         if (i_time < BATCH_SIZE_FILLED) {

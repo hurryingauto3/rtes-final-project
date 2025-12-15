@@ -170,32 +170,47 @@ void ParkinsonBLE::onDisconnectionComplete(const ble::DisconnectionCompleteEvent
 void ParkinsonBLE::updateTremor(float value) {
     int len = snprintf((char *)_tremor_buffer, sizeof(_tremor_buffer), "Tremor: %.2f", value);
     if (len > 0) {
-        _ble.gattServer().write(
+        ble_error_t error = _ble.gattServer().write(
             _tremor_handle,
             _tremor_buffer,
             (uint16_t)len
         );
+        if (error != BLE_ERROR_NONE) {
+            #ifdef DEBUG
+            printf("Failed to update tremor characteristic: %d\n", error);
+            #endif
+        }
     }
 }
 
 void ParkinsonBLE::updateDyskinesia(float value) {
     int len = snprintf((char *)_dyskinesia_buffer, sizeof(_dyskinesia_buffer), "Dyskinesia: %.2f", value);
     if (len > 0) {
-        _ble.gattServer().write(
+        ble_error_t error = _ble.gattServer().write(
             _dyskinesia_handle,
             _dyskinesia_buffer,
             (uint16_t)len
         );
+        if (error != BLE_ERROR_NONE) {
+            #ifdef DEBUG
+            printf("Failed to update dyskinesia characteristic: %d\n", error);
+            #endif
+        }
     }
 }
 
 void ParkinsonBLE::updateFreezingGait(float value) {
     int len = snprintf((char *)_fog_buffer, sizeof(_fog_buffer), "Freezing of Gait: %.2f", value);
     if (len > 0) {
-        _ble.gattServer().write(
+        ble_error_t error = _ble.gattServer().write(
             _fog_handle,
             _fog_buffer,
             (uint16_t)len
         );
+        if (error != BLE_ERROR_NONE) {
+            #ifdef DEBUG
+            printf("Failed to update FOG characteristic: %d\n", error);
+            #endif
+        }
     }
 }

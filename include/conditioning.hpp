@@ -5,6 +5,7 @@
 
 #include "globals.hpp"
 #include "arm_math.h"
+#include <cstdio>
 
 // How fast gravity moves toward the average 
 #define GRAVITY_UPDATE_RATE 0.05
@@ -30,7 +31,7 @@ typedef struct {
 /** Apply a low pass to a series of data points. Out may be the same as data.
  * @details a 2nd order Chebyshev-I low pass w/ 2db passband ripple, 7Hz cutoff
 */
-static void lowpass(float *data, FilterHistory2 *history, int n, bool invert_t, float *out) {
+inline static void lowpass(float *data, FilterHistory2 *history, int n, bool invert_t, float *out) {
     for (int t = 0; t < n; t++) {
         bool odd = ((t & 1) == 0) ^ invert_t;
         float y = 
@@ -43,13 +44,13 @@ static void lowpass(float *data, FilterHistory2 *history, int n, bool invert_t, 
 }
 
 /** Cross product creates a vector that is perpendicular to both a and b */
-static void cross(const float a[3], const float b[3], float dest[3]) {
+inline static void cross(const float a[3], const float b[3], float dest[3]) {
     dest[0] = a[1] * b[2] - a[2] * b[1];
     dest[1] = a[2] * b[0] - a[0] * b[2];
     dest[2] = a[0] * b[1] - a[1] * b[0];
 }
 
-static float calc_total_energy(float accel_freq_mags[3][BATCH_SIZE / 2 + 1]) {
+inline static float calc_total_energy(float accel_freq_mags[3][BATCH_SIZE / 2 + 1]) {
     float total[3] = { 0.f, 0.f, 0.f };
     for (int axis = 0; axis < 3; axis++) {
         for (int bin = 0; bin < BATCH_SIZE / 2 + 1; bin++) {
@@ -69,7 +70,7 @@ static float calc_total_energy(float accel_freq_mags[3][BATCH_SIZE / 2 + 1]) {
  * @param accel_freq_mags Array of 3 frequency magnitude arrays (one per axis)
  * @return Tremor intensity value (0.0 = no tremor, higher values = more intense)
  */
-static float detect_tremor(float accel_freq_mags[3][BATCH_SIZE / 2 + 1]) {
+inline static float detect_tremor(float accel_freq_mags[3][BATCH_SIZE / 2 + 1]) {
     // Frequency bin calculation: bin_size = POLL_RATE / BATCH_SIZE = 52/256 ≈ 0.203 Hz/bin
     // 3 Hz → bin ~15, 5 Hz → bin ~25
     int bin_3hz = (int)(3.0f / FREQUENCY_BIN_SIZE);
@@ -96,7 +97,7 @@ static float detect_tremor(float accel_freq_mags[3][BATCH_SIZE / 2 + 1]) {
  * @param accel_freq_mags Array of 3 frequency magnitude arrays (one per axis)
  * @return Dyskinesia intensity value (0.0 = none, higher values = more intense)
  */
-static float detect_dyskinesia(float accel_freq_mags[3][BATCH_SIZE / 2 + 1]) {
+inline static float detect_dyskinesia(float accel_freq_mags[3][BATCH_SIZE / 2 + 1]) {
     // Frequency bin calculation: bin_size = POLL_RATE / BATCH_SIZE = 52/256 ≈ 0.203 Hz/bin
     // 5 Hz → bin ~25, 7 Hz → bin ~34
     int bin_5hz = (int)(5.0f / FREQUENCY_BIN_SIZE);
@@ -130,7 +131,7 @@ static float detect_dyskinesia(float accel_freq_mags[3][BATCH_SIZE / 2 + 1]) {
  * @param accel_freq_mags Frequency domain representation for step detection
  * @return FOG intensity [0.0, 1.0] where higher means more confident freeze after walking
  */
-static float detect_freezing(const float accel_time[3][BATCH_SIZE], float accel_freq_mags[3][BATCH_SIZE / 2 + 1]) {
+inline static float detect_freezing(const float accel_time[3][BATCH_SIZE], float accel_freq_mags[3][BATCH_SIZE / 2 + 1]) {
     static enum { IDLE, WALKING, FROZEN } fog_state = IDLE;
     static int walking_batch_count = 0;
     static int frozen_batch_count = 0;
@@ -150,30 +151,42 @@ static float detect_freezing(const float accel_time[3][BATCH_SIZE], float accel_
     float walking_intensity = walking_power / num_walking_bins;
     
     // === Step 2: Detect low motion (potential freeze) ===
-    const float LOW_ACTIVITY_THRESHOLD = 0.05f;
-    int low_activity_count = 0;
+    // Calculate variance to detect stillness (low variance = not moving much)
     const int N = BATCH_SIZE_FILLED;
+    float mean[3] = {0.0f, 0.0f, 0.0f};
     
+    // Calculate mean for each axis
     for (int t = 0; t < N; ++t) {
-        float ax = accel_time[0][t];
-        float ay = accel_time[1][t];
-        float az = accel_time[2][t];
-        float mag = sqrtf(ax * ax + ay * ay + az * az);
-        
-        if (mag < LOW_ACTIVITY_THRESHOLD) {
-            low_activity_count += 1;
-        }
+        mean[0] += accel_time[0][t];
+        mean[1] += accel_time[1][t];
+        mean[2] += accel_time[2][t];
     }
-    float stillness_ratio = (float)low_activity_count / (float)N;
+    mean[0] /= N;
+    mean[1] /= N;
+    mean[2] /= N;
+    
+    // Calculate variance (measure of motion)
+    float variance = 0.0f;
+    for (int t = 0; t < N; ++t) {
+        float dx = accel_time[0][t] - mean[0];
+        float dy = accel_time[1][t] - mean[1];
+        float dz = accel_time[2][t] - mean[2];
+        variance += (dx*dx + dy*dy + dz*dz);
+    }
+    variance /= N;
+    
+    // Low variance = stillness. Typical walking has variance > 0.1
+    const float STILLNESS_VARIANCE_THRESHOLD = 0.08f;
+    float stillness_ratio = (variance < STILLNESS_VARIANCE_THRESHOLD) ? 1.0f : 0.0f;
     
     // === Step 3: State machine ===
-    const float WALKING_THRESHOLD = 0.5f;  // Tune based on your data
-    const float STILLNESS_THRESHOLD = 0.7f; // 70% of samples must be still
-    const int MIN_WALKING_BATCHES = 2;     // Must walk for at least 2 batches (6 seconds)
-    const int FREEZE_DECAY_BATCHES = 3;    // Alert decays after 3 batches without movement
+    // More realistic thresholds for actual gait detection
+    const float WALKING_THRESHOLD = 0.10f;  // Very sensitive to walking motion
+    const int MIN_WALKING_BATCHES = 1;      // Reduced to 1 batch (3 seconds) for quicker detection
+    const int FREEZE_DECAY_BATCHES = 5;     // Increased to 5 batches (~15 seconds) to keep signal visible
     
-    bool is_walking = (walking_intensity > WALKING_THRESHOLD) && (stillness_ratio < 0.5f);
-    bool is_still = (stillness_ratio > STILLNESS_THRESHOLD);
+    bool is_walking = (walking_intensity > WALKING_THRESHOLD) && (variance > 0.03f);  // Require some variance to be walking
+    bool is_still = (variance < 0.06f);  // Stillness when variance drops below this
     
     switch (fog_state) {
         case IDLE:
@@ -227,6 +240,12 @@ static float detect_freezing(const float accel_time[3][BATCH_SIZE], float accel_
         intensity = (float)frozen_batch_count / (float)FREEZE_DECAY_BATCHES;
         if (intensity > 1.0f) intensity = 1.0f;
     }
+    
+    #ifdef DEBUG
+    // Debug output to understand state transitions - print every batch for real-time visibility
+    printf("FOG: state=%d, walk=%.2f, var=%.3f, int=%.3f\n",
+           fog_state, walking_intensity, variance, intensity);
+    #endif
     
     return intensity;
 }

@@ -38,22 +38,18 @@ public:
 #if USE_BLE_OUTPUT
         _ble_handler.updateTremor(value);
 #endif
-        // Always send via serial for debugging
-        printf(">Tremor:%.3f\n", value);
     }
 
     void sendDyskinesia(float value) {
 #if USE_BLE_OUTPUT
         _ble_handler.updateDyskinesia(value);
 #endif
-        printf(">Dyskinesia:%.3f\n", value);
     }
 
     void sendFreezingGait(float value) {
 #if USE_BLE_OUTPUT
         _ble_handler.updateFreezingGait(value);
 #endif
-        printf(">FOG:%.3f\n", value);
     }
 
 private:
