@@ -17,27 +17,6 @@ public:
     ParkinsonBLE(events::EventQueue &event_queue) :
         _event_queue(event_queue),
         _ble(ble::BLE::Instance()),
-        _tremor_char(
-            UUID(TREMOR_CHAR_UUID),
-            (uint8_t *)&_tremor_value,
-            sizeof(float),
-            sizeof(float),
-            GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_NOTIFY | GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_READ
-        ),
-        _dyskinesia_char(
-            UUID(DYSKINESIA_CHAR_UUID),
-            (uint8_t *)&_dyskinesia_value,
-            sizeof(float),
-            sizeof(float),
-            GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_NOTIFY | GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_READ
-        ),
-        _fog_char(
-            UUID(FOG_CHAR_UUID),
-            (uint8_t *)&_fog_value,
-            sizeof(float),
-            sizeof(float),
-            GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_NOTIFY | GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_READ
-        ),
         _adv_data_builder(_adv_buffer, sizeof(_adv_buffer))
     {
     }
@@ -68,13 +47,9 @@ private:
     events::EventQueue &_event_queue;
     ble::BLE &_ble;
 
-    float _tremor_value = 0.0f;
-    float _dyskinesia_value = 0.0f;
-    float _fog_value = 0.0f;
-
-    GattCharacteristic _tremor_char;
-    GattCharacteristic _dyskinesia_char;
-    GattCharacteristic _fog_char;
+    uint8_t _tremor_buffer[32];
+    uint8_t _dyskinesia_buffer[32];
+    uint8_t _fog_buffer[32];
 
     uint8_t _adv_buffer[ble::LEGACY_ADVERTISING_MAX_SIZE];
     ble::AdvertisingDataBuilder _adv_data_builder;

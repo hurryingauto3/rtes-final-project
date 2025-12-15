@@ -1,6 +1,8 @@
 #include "ble_handler.hpp"
 #include "mbed.h"
 #include "globals.hpp"
+#include "ble/GattAttribute.h"
+
 
 void ParkinsonBLE::init() {
     _ble.onEventsToProcess(makeFunctionPointer(this, &ParkinsonBLE::schedule_ble_events));
@@ -23,7 +25,61 @@ void ParkinsonBLE::on_init_complete(ble::BLE::InitializationCompleteCallbackCont
     ble::BLE &ble = params->ble;
     ble.gap().setEventHandler(this);
 
-    GattCharacteristic *charTable[] = {&_tremor_char, &_dyskinesia_char, &_fog_char};
+    // --- Descriptors to tell BLE clients these characteristics are UTF-8 text ---
+    // 0x2904 = Characteristic Presentation Format Descriptor
+    // Format 0x19 = UTF-8 string (Bluetooth SIG Assigned Numbers)
+    static uint8_t cpf_utf8[7] = {0x19, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+
+    // 0x2901 = Characteristic User Description Descriptor
+    static uint8_t tremor_desc[]     = "Tremor";
+    static uint8_t dyskinesia_desc[] = "Dyskinesia";
+    static uint8_t fog_desc[]        = "Freezing of Gait";
+
+    static GattAttribute tremor_cpf(UUID((uint16_t)0x2904), cpf_utf8, sizeof(cpf_utf8), sizeof(cpf_utf8), false);
+    static GattAttribute dysk_cpf(UUID((uint16_t)0x2904), cpf_utf8, sizeof(cpf_utf8), sizeof(cpf_utf8), false);
+    static GattAttribute fog_cpf(UUID((uint16_t)0x2904), cpf_utf8, sizeof(cpf_utf8), sizeof(cpf_utf8), false);
+
+    static GattAttribute tremor_ud(UUID((uint16_t)0x2901), tremor_desc, sizeof(tremor_desc) - 1, sizeof(tremor_desc) - 1, false);
+    static GattAttribute dysk_ud(UUID((uint16_t)0x2901), dyskinesia_desc, sizeof(dyskinesia_desc) - 1, sizeof(dyskinesia_desc) - 1, false);
+    static GattAttribute fog_ud(UUID((uint16_t)0x2901), fog_desc, sizeof(fog_desc) - 1, sizeof(fog_desc) - 1, false);
+
+    // Build descriptor tables for each characteristic
+    GattAttribute *tremor_attrs[] = {&tremor_ud, &tremor_cpf};
+    GattAttribute *dysk_attrs[] = {&dysk_ud, &dysk_cpf};
+    GattAttribute *fog_attrs[] = {&fog_ud, &fog_cpf};
+
+    // Create new characteristics with descriptors
+    GattCharacteristic tremor_char(
+        UUID(TREMOR_CHAR_UUID),
+        _tremor_buffer,
+        0,
+        sizeof(_tremor_buffer),
+        GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_NOTIFY | GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_READ,
+        tremor_attrs,
+        sizeof(tremor_attrs) / sizeof(GattAttribute *)
+    );
+
+    GattCharacteristic dysk_char(
+        UUID(DYSKINESIA_CHAR_UUID),
+        _dyskinesia_buffer,
+        0,
+        sizeof(_dyskinesia_buffer),
+        GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_NOTIFY | GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_READ,
+        dysk_attrs,
+        sizeof(dysk_attrs) / sizeof(GattAttribute *)
+    );
+
+    GattCharacteristic fog_char(
+        UUID(FOG_CHAR_UUID),
+        _fog_buffer,
+        0,
+        sizeof(_fog_buffer),
+        GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_NOTIFY | GattCharacteristic::BLE_GATT_CHAR_PROPERTIES_READ,
+        fog_attrs,
+        sizeof(fog_attrs) / sizeof(GattAttribute *)
+    );
+
+    GattCharacteristic *charTable[] = {&tremor_char, &dysk_char, &fog_char};
     GattService parkinsonService(
         UUID(PARKINSON_SERVICE_UUID),
         charTable,
@@ -32,9 +88,9 @@ void ParkinsonBLE::on_init_complete(ble::BLE::InitializationCompleteCallbackCont
 
     ble.gattServer().addService(parkinsonService);
 
-    _tremor_handle = _tremor_char.getValueHandle();
-    _dyskinesia_handle = _dyskinesia_char.getValueHandle();
-    _fog_handle = _fog_char.getValueHandle();
+    _tremor_handle = tremor_char.getValueHandle();
+    _dyskinesia_handle = dysk_char.getValueHandle();
+    _fog_handle = fog_char.getValueHandle();
 
     start_advertising();
 }
@@ -112,34 +168,34 @@ void ParkinsonBLE::onDisconnectionComplete(const ble::DisconnectionCompleteEvent
 }
 
 void ParkinsonBLE::updateTremor(float value) {
-    if (_tremor_value != value) {
-        _tremor_value = value;
+    int len = snprintf((char *)_tremor_buffer, sizeof(_tremor_buffer), "Tremor: %.2f", value);
+    if (len > 0) {
         _ble.gattServer().write(
             _tremor_handle,
-            (uint8_t *)&_tremor_value,
-            sizeof(_tremor_value)
+            _tremor_buffer,
+            (uint16_t)len
         );
     }
 }
 
 void ParkinsonBLE::updateDyskinesia(float value) {
-    if (_dyskinesia_value != value) {
-        _dyskinesia_value = value;
+    int len = snprintf((char *)_dyskinesia_buffer, sizeof(_dyskinesia_buffer), "Dyskinesia: %.2f", value);
+    if (len > 0) {
         _ble.gattServer().write(
             _dyskinesia_handle,
-            (uint8_t *)&_dyskinesia_value,
-            sizeof(_dyskinesia_value)
+            _dyskinesia_buffer,
+            (uint16_t)len
         );
     }
 }
 
 void ParkinsonBLE::updateFreezingGait(float value) {
-    if (_fog_value != value) {
-        _fog_value = value;
+    int len = snprintf((char *)_fog_buffer, sizeof(_fog_buffer), "Freezing of Gait: %.2f", value);
+    if (len > 0) {
         _ble.gattServer().write(
             _fog_handle,
-            (uint8_t *)&_fog_value,
-            sizeof(_fog_value)
+            _fog_buffer,
+            (uint16_t)len
         );
     }
 }

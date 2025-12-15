@@ -2,7 +2,9 @@
     "target_overrides":{
         "*": {
             "platform.minimal-printf-enable-floating-point": true,
-            "target.features_add": ["BLE"]
+            "target.features_add": ["BLE"],
+            "target.components_add": ["BlueNRG_MS"],
+            "target.extra_labels_add": ["CORDIO"]
         }
     }
 }
