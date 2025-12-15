@@ -91,6 +91,11 @@ void ParkinsonBLE::on_init_complete(ble::BLE::InitializationCompleteCallbackCont
     _tremor_handle = tremor_char.getValueHandle();
     _dyskinesia_handle = dysk_char.getValueHandle();
     _fog_handle = fog_char.getValueHandle();
+    
+    #ifdef DEBUG
+    printf("BLE Handles - Tremor: %d, Dyskinesia: %d, FOG: %d\n",
+           _tremor_handle, _dyskinesia_handle, _fog_handle);
+    #endif
 
     start_advertising();
 }
@@ -173,7 +178,8 @@ void ParkinsonBLE::updateTremor(float value) {
         ble_error_t error = _ble.gattServer().write(
             _tremor_handle,
             _tremor_buffer,
-            (uint16_t)len
+            (uint16_t)len,
+            /* localOnly */ false  // Allow notification to clients
         );
         if (error != BLE_ERROR_NONE) {
             #ifdef DEBUG
@@ -189,7 +195,8 @@ void ParkinsonBLE::updateDyskinesia(float value) {
         ble_error_t error = _ble.gattServer().write(
             _dyskinesia_handle,
             _dyskinesia_buffer,
-            (uint16_t)len
+            (uint16_t)len,
+            /* localOnly */ false  // Allow notification to clients
         );
         if (error != BLE_ERROR_NONE) {
             #ifdef DEBUG
@@ -202,14 +209,16 @@ void ParkinsonBLE::updateDyskinesia(float value) {
 void ParkinsonBLE::updateFreezingGait(float value) {
     int len = snprintf((char *)_fog_buffer, sizeof(_fog_buffer), "Freezing of Gait: %.2f", value);
     if (len > 0) {
+        // First write the value
         ble_error_t error = _ble.gattServer().write(
             _fog_handle,
             _fog_buffer,
-            (uint16_t)len
+            (uint16_t)len,
+            /* localOnly */ false  // Allow notification to clients
         );
         if (error != BLE_ERROR_NONE) {
             #ifdef DEBUG
-            printf("Failed to update FOG characteristic: %d\n", error);
+            printf("Failed to update dyskinesia characteristic: %d\n", error);
             #endif
         }
     }

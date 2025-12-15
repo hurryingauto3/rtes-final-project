@@ -33,6 +33,7 @@ class BleMonitorClient:
         self._notifications_started: bool = False
         self._notify_callbacks: Dict[str, DataCallback] = {}
         self._lock = asyncio.Lock()
+        self._fog_poll_task: Optional[asyncio.Task] = None
 
     # ------------------------------------------------------------------
     # Logging helpers
@@ -130,19 +131,47 @@ class BleMonitorClient:
             await self._client.start_notify(
                 TREMOR_CHAR_UUID, _notification_handler(TREMOR_CHAR_UUID)
             )
+            self._log(f"✓ Tremor notifications subscribed (UUID: {TREMOR_CHAR_UUID})")
             await self._client.start_notify(
                 DYSKINESIA_CHAR_UUID,
                 _notification_handler(DYSKINESIA_CHAR_UUID),
             )
+            self._log(f"✓ Dyskinesia notifications subscribed (UUID: {DYSKINESIA_CHAR_UUID})")
             await self._client.start_notify(
                 FOG_CHAR_UUID, _notification_handler(FOG_CHAR_UUID)
             )
+            self._log(f"✓ FOG notifications subscribed (UUID: {FOG_CHAR_UUID})")
         except Exception as exc:  # pragma: no cover - platform dependent
             self._log(f"Error starting notifications: {exc}")
             raise
         else:
             self._notifications_started = True
             self._log("Notifications started.")
+
+            # Start a background poller for FOG as a fallback if notifications
+            # are flaky on this characteristic. This reads the FOG value once
+            # per second and forwards it through the same callback.
+            async def _poll_fog() -> None:
+                assert self._client is not None
+                while self._notifications_started and self._client and self._client.is_connected:
+                    try:
+                        data = await self._client.read_gatt_char(FOG_CHAR_UUID)
+                        text = data.decode("utf-8", errors="replace")
+                        hex_data = bytes_to_hex(data)
+                        cb = self._notify_callbacks.get(FOG_CHAR_UUID)
+                        self._log(f"[FOG poll] Read from {FOG_CHAR_UUID}: text='{text}' raw=[{hex_data}]")
+                        if cb:
+                            cb(text, bytes(data))
+                    except Exception as exc:  # pragma: no cover - platform dependent
+                        self._log(f"[FOG poll] Error reading FOG characteristic: {exc}")
+                        # If read fails repeatedly, break out to avoid spamming logs
+                        break
+                    await asyncio.sleep(0.5)
+
+            # Cancel any existing poller and start a new one
+            if self._fog_poll_task is not None and not self._fog_poll_task.done():
+                self._fog_poll_task.cancel()
+            self._fog_poll_task = asyncio.create_task(_poll_fog())
 
     async def stop_notifications(self) -> None:
         """Stop notifications on all subscribed characteristics."""
@@ -157,6 +186,8 @@ class BleMonitorClient:
         except Exception as exc:  # pragma: no cover - platform dependent
             self._log(f"Error stopping notifications: {exc}")
         self._notifications_started = False
+        # Stop FOG poller
+        if self._fog_poll_task is not None and not self._fog_poll_task.done():
+            self._fog_poll_task.cancel()
+            self._fog_poll_task = None
         self._log("Notifications stopped.")
-
-

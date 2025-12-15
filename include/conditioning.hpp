@@ -124,38 +124,62 @@ inline static float detect_dyskinesia(float accel_freq_mags[3][BATCH_SIZE / 2 + 
  * Enhanced FOG detection that looks for the characteristic pattern:
  * 1. Walking detected (rhythmic movement in 1-3 Hz range, typically ~2 Hz for steps)
  * 2. Sudden cessation of movement (low dynamic acceleration)
- * 
- * We use a simple state machine across batches to track walking -> freeze transitions.
- * 
+ *
+ * We use a state machine across batches to track walking -> freeze transitions.
+ * Thresholds are calibrated at runtime from the device's own idle variance.
+ *
  * @param accel_time 3xBATCH_SIZE array of filtered accel samples (gravity removed)
  * @param accel_freq_mags Frequency domain representation for step detection
  * @return FOG intensity [0.0, 1.0] where higher means more confident freeze after walking
  */
 inline static float detect_freezing(const float accel_time[3][BATCH_SIZE], float accel_freq_mags[3][BATCH_SIZE / 2 + 1]) {
+    // --- Persistent state across batches ---
     static enum { IDLE, WALKING, FROZEN } fog_state = IDLE;
-    static int walking_batch_count = 0;
-    static int frozen_batch_count = 0;
-    
-    // === Step 1: Detect if currently walking ===
-    // Walking typically shows rhythmic motion in 1-3 Hz (cadence ~60-180 steps/min)
-    int bin_1hz = (int)(1.0f / FREQUENCY_BIN_SIZE);
-    int bin_3hz = (int)(3.0f / FREQUENCY_BIN_SIZE);
-    
+    static int  walking_batch_count = 0;
+    static int  frozen_batch_count  = 0;
+    static int  still_batch_count   = 0;
+
+    // Calibration of variance thresholds (idle noise floor)
+    static bool  calibrated = false;
+    static bool  calibration_just_completed = false;
+    static float idle_var_mean = 0.0f;
+    static float idle_var_m2   = 0.0f;
+    static int   idle_n        = 0;
+    static float STILLNESS_VARIANCE_THRESHOLD = 0.0f;
+    static float WALKING_VARIANCE_THRESHOLD   = 0.0f;
+
+    // --- Step 1: Compute walking intensity (1–3 Hz band) with safe bins ---
+    const int   N_FFT  = BATCH_SIZE_FILLED;
+    const float bin_hz = (float)POLL_RATE / (float)N_FFT; // Hz per FFT bin
+
+    int bin_1hz = (int)lroundf(1.0f / bin_hz);
+    int bin_3hz = (int)lroundf(3.0f / bin_hz);
+
+    int max_bin = N_FFT / 2;
+    if (bin_1hz < 0)       bin_1hz = 0;
+    if (bin_3hz > max_bin) bin_3hz = max_bin;
+    if (bin_1hz > bin_3hz) {
+        bin_1hz = 0;
+        bin_3hz = 0;
+    }
+
     float walking_power = 0.0f;
     for (int axis = 0; axis < 3; axis++) {
         for (int bin = bin_1hz; bin <= bin_3hz; bin++) {
             walking_power += accel_freq_mags[axis][bin];
         }
     }
+
     int num_walking_bins = (bin_3hz - bin_1hz + 1) * 3;
-    float walking_intensity = walking_power / num_walking_bins;
-    
-    // === Step 2: Detect low motion (potential freeze) ===
-    // Calculate variance to detect stillness (low variance = not moving much)
+    if (num_walking_bins <= 0) {
+        num_walking_bins = 1; // avoid divide-by-zero
+    }
+    float walking_intensity = walking_power / (float)num_walking_bins;
+
+    // --- Step 2: Time-domain variance as motion metric ---
     const int N = BATCH_SIZE_FILLED;
     float mean[3] = {0.0f, 0.0f, 0.0f};
-    
-    // Calculate mean for each axis
+
     for (int t = 0; t < N; ++t) {
         mean[0] += accel_time[0][t];
         mean[1] += accel_time[1][t];
@@ -164,88 +188,154 @@ inline static float detect_freezing(const float accel_time[3][BATCH_SIZE], float
     mean[0] /= N;
     mean[1] /= N;
     mean[2] /= N;
-    
-    // Calculate variance (measure of motion)
+
     float variance = 0.0f;
     for (int t = 0; t < N; ++t) {
         float dx = accel_time[0][t] - mean[0];
         float dy = accel_time[1][t] - mean[1];
         float dz = accel_time[2][t] - mean[2];
-        variance += (dx*dx + dy*dy + dz*dz);
+        variance += (dx * dx + dy * dy + dz * dz);
     }
     variance /= N;
-    
-    // Low variance = stillness. Typical walking has variance > 0.1
-    const float STILLNESS_VARIANCE_THRESHOLD = 0.08f;
-    float stillness_ratio = (variance < STILLNESS_VARIANCE_THRESHOLD) ? 1.0f : 0.0f;
-    
-    // === Step 3: State machine ===
-    // More realistic thresholds for actual gait detection
-    const float WALKING_THRESHOLD = 0.10f;  // Very sensitive to walking motion
-    const int MIN_WALKING_BATCHES = 1;      // Reduced to 1 batch (3 seconds) for quicker detection
-    const int FREEZE_DECAY_BATCHES = 5;     // Increased to 5 batches (~15 seconds) to keep signal visible
-    
-    bool is_walking = (walking_intensity > WALKING_THRESHOLD) && (variance > 0.03f);  // Require some variance to be walking
-    bool is_still = (variance < 0.06f);  // Stillness when variance drops below this
-    
+
+    // --- Step 3: Short idle calibration to learn noise floor ---
+    if (!calibrated) {
+        // Online variance estimation (Welford)
+        idle_n++;
+        float d = variance - idle_var_mean;
+        idle_var_mean += d / (float)idle_n;
+        idle_var_m2   += d * (variance - idle_var_mean);
+
+        if (idle_n >= 20) { // ~20 initial batches assumed idle
+            float idle_std = 0.0f;
+            if (idle_n > 1 && idle_var_m2 > 0.0f) {
+                idle_std = sqrtf(idle_var_m2 / (float)(idle_n - 1));
+            }
+
+            if (idle_std > 0.0f) {
+                // Normal case: thresholds relative to noise floor
+                STILLNESS_VARIANCE_THRESHOLD = idle_var_mean + 2.5f * idle_std;
+                WALKING_VARIANCE_THRESHOLD   = idle_var_mean + 6.0f * idle_std;
+            } else {
+                // Fallback: calibration saw effectively zero variance (e.g. accel_time all zeros).
+                // Use defaults tuned to your observed scale: idle var ~0.08 when resting,
+                // vigorous motion >> 0.5.
+                STILLNESS_VARIANCE_THRESHOLD = 0.10f;  // idle 0.08 < 0.10 ⇒ counts as still
+                WALKING_VARIANCE_THRESHOLD   = 0.15f;  // requires clear motion to count as walking
+            }
+            calibrated = true;
+            calibration_just_completed = true;
+
+            #ifdef DEBUG
+            printf("FOG calib: idle_mean=%.4f idle_std=%.4f stillThr=%.4f walkVarThr=%.4f\n",
+                   idle_var_mean, idle_std,
+                   STILLNESS_VARIANCE_THRESHOLD, WALKING_VARIANCE_THRESHOLD);
+            #endif
+        }
+
+        // Until calibrated, stay idle with zero intensity
+        return 0.0f;
+    }
+
+    // --- Step 4: Walking hysteresis + stillness using calibrated thresholds ---
+    const float WALK_ON  = 0.11f;
+    const float WALK_OFF = 0.08f;
+    static bool walking_flag = false;
+
+    if (!walking_flag) {
+        walking_flag = (walking_intensity > WALK_ON);
+    } else {
+        walking_flag = (walking_intensity > WALK_OFF);
+    }
+
+    bool is_still   = (variance < STILLNESS_VARIANCE_THRESHOLD);
+    bool is_walking = walking_flag && (variance > WALKING_VARIANCE_THRESHOLD);
+
+    // --- Step 5: State machine with walking->stillness requirement ---
+    const int MIN_WALKING_BATCHES  = 3;  // require several walking windows
+    const int MIN_STILL_BATCHES    = 2;  // require stillness persistence
+    const int FREEZE_DECAY_BATCHES = 5;  // how long FOG stays high
+
     switch (fog_state) {
         case IDLE:
             if (is_walking) {
                 fog_state = WALKING;
                 walking_batch_count = 1;
-                frozen_batch_count = 0;
+                still_batch_count   = 0;
+                frozen_batch_count  = 0;
             }
             break;
-            
+
         case WALKING:
             if (is_walking) {
                 walking_batch_count++;
-                frozen_batch_count = 0;
+                still_batch_count = 0;
             } else if (is_still && walking_batch_count >= MIN_WALKING_BATCHES) {
-                // Transition to freeze only if we were walking long enough
-                fog_state = FROZEN;
-                frozen_batch_count = 1;
-            } else if (!is_walking && !is_still) {
-                // Ambiguous state, reset
+                still_batch_count++;
+                if (still_batch_count >= MIN_STILL_BATCHES) {
+                    fog_state = FROZEN;
+                    frozen_batch_count = 1;
+                }
+            } else {
+                // Neither confidently walking nor still after good walking
                 fog_state = IDLE;
                 walking_batch_count = 0;
+                still_batch_count   = 0;
+                frozen_batch_count  = 0;
             }
             break;
-            
+
         case FROZEN:
             if (is_still) {
                 frozen_batch_count++;
+                if (frozen_batch_count > FREEZE_DECAY_BATCHES) {
+                    fog_state = IDLE;
+                    walking_batch_count = 0;
+                    still_batch_count   = 0;
+                    frozen_batch_count  = 0;
+                }
             } else if (is_walking) {
                 // Recovered from freeze, back to walking
                 fog_state = WALKING;
                 walking_batch_count = 1;
-                frozen_batch_count = 0;
+                still_batch_count   = 0;
+                frozen_batch_count  = 0;
             } else {
-                // Decay the freeze alert
+                // Ambiguous motion; decay the freeze alert
                 frozen_batch_count++;
                 if (frozen_batch_count > FREEZE_DECAY_BATCHES) {
                     fog_state = IDLE;
-                    frozen_batch_count = 0;
                     walking_batch_count = 0;
+                    still_batch_count   = 0;
+                    frozen_batch_count  = 0;
                 }
             }
             break;
     }
-    
-    // === Step 4: Calculate intensity ===
+
+    // --- Step 6: Calculate intensity ---
     float intensity = 0.0f;
     if (fog_state == FROZEN && frozen_batch_count > 0) {
-        // Ramp up intensity based on how long we've been frozen
-        // Cap at 1.0 after FREEZE_DECAY_BATCHES
         intensity = (float)frozen_batch_count / (float)FREEZE_DECAY_BATCHES;
         if (intensity > 1.0f) intensity = 1.0f;
     }
-    
+
     #ifdef DEBUG
-    // Debug output to understand state transitions - print every batch for real-time visibility
-    printf("FOG: state=%d, walk=%.2f, var=%.3f, int=%.3f\n",
-           fog_state, walking_intensity, variance, intensity);
+    printf("FOGdbg N=%d binHz=%.4f b1=%d b3=%d walkPow=%.4f walkInt=%.4f "
+           "var=%.4f stillThr=%.4f walkVarThr=%.4f state=%d walkB=%d stillB=%d freezeB=%d int=%.3f\n",
+           N_FFT, bin_hz, bin_1hz, bin_3hz,
+           walking_power, walking_intensity,
+           variance, STILLNESS_VARIANCE_THRESHOLD, WALKING_VARIANCE_THRESHOLD,
+           fog_state, walking_batch_count, still_batch_count, frozen_batch_count, intensity);
     #endif
-    
+
+    // Send a one-shot special calibration marker via FOG:
+    // Freezing of Gait: -0.10 will be interpreted by the Python UI as
+    // "calibration complete", then normal intensities resume.
+    if (calibration_just_completed) {
+        calibration_just_completed = false;
+        return -0.10f;
+    }
+
     return intensity;
 }

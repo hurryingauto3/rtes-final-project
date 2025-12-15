@@ -68,9 +68,9 @@ int main() {
 
     #ifdef TELEPLOT
       // Print in Teleplot format (>name:value)
-      printf(">tremor_intensity:%.3f\n>dyskinesia_intensity:%.3f\n>fog_intensity:%.3f\n",
-        tremor_intensity, dyskinesia_intensity, fog_intensity
-      );
+      // printf(">tremor_intensity:%.3f\n>dyskinesia_intensity:%.3f\n>fog_intensity:%.3f\n",
+      //   tremor_intensity, dyskinesia_intensity, fog_intensity
+      // );
       #endif
   }
 

@@ -128,6 +128,21 @@ class AppController:
 
     def _on_fog_notification(self, text: str, _raw: bytes) -> None:
         now = current_time()
+        # Special one-shot marker: the firmware sends "Freezing of Gait: -0.10"
+        # right after FOG calibration completes. Treat any negative FOG value
+        # as a calibration notification and log it clearly for the user.
+        try:
+            # Expect format "Freezing of Gait: <value>"
+            parts = text.split(":")
+            if len(parts) >= 2:
+                value_str = parts[-1].strip()
+                value = float(value_str)
+                if value < 0.0:
+                    self.window.append_log("FOG calibration complete (negative marker received).")
+        except Exception:
+            # If parsing fails, just ignore and show the raw text
+            pass
+
         self.window.update_fog(text, now)
 
 
