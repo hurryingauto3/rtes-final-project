@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Iterable, Optional
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis
 
 from config import DEVICE_NAME_FILTER, STALE_SECONDS
 from utils import LogBuffer, age_seconds, format_timestamp
@@ -31,6 +32,8 @@ class DataPanel(QWidget):
         super().__init__(parent)
         self._title = title
         self._last_update: Optional[datetime] = None
+        self._max_points: int = 120
+        self._history: list[float] = []
 
         self.title_label = QLabel(title)
         self.title_label.setStyleSheet("font-size: 18px; font-weight: bold;")
@@ -55,6 +58,28 @@ class DataPanel(QWidget):
         layout.addWidget(self.value_label)
         layout.addWidget(self.timestamp_label)
 
+        # Time-series chart for this metric
+        self.series = QLineSeries()
+        self.chart = QChart()
+        self.chart.addSeries(self.series)
+        self.chart.setTitle(f"{title} History")
+        self.chart.legend().hide()
+
+        self.axis_x = QValueAxis()
+        self.axis_x.setTitleText("Sample")
+        self.axis_y = QValueAxis()
+        self.axis_y.setTitleText("Value")
+        self.axis_y.setRange(0.0, 1.0)
+
+        self.chart.addAxis(self.axis_x, Qt.AlignBottom)
+        self.chart.addAxis(self.axis_y, Qt.AlignLeft)
+        self.series.attachAxis(self.axis_x)
+        self.series.attachAxis(self.axis_y)
+
+        self.chart_view = QChartView(self.chart)
+        self.chart_view.setRenderHint(QPainter.Antialiasing)
+        layout.addWidget(self.chart_view)
+
         self.setLayout(layout)
         self.setStyleSheet(
             "QWidget { border: 1px solid #ccc; border-radius: 4px; padding: 8px; }"
@@ -76,7 +101,60 @@ class DataPanel(QWidget):
         self._last_update = timestamp
         self.value_label.setText(text)
         self.timestamp_label.setText(f"Last update: {format_timestamp(timestamp)}")
+        # Update chart history if we can parse a numeric value
+        value = self._extract_numeric_value(text)
+        if value is not None:
+            self._append_sample(value)
+            self._update_chart()
+            if value > 0.7:
+                self._flash_threshold()
         self._update_status()
+
+    def _extract_numeric_value(self, text: str) -> Optional[float]:
+        """Best-effort extraction of the trailing numeric value from 'Label: value'."""
+        try:
+            parts = text.split(":")
+            if len(parts) >= 2:
+                value_str = parts[-1].strip()
+                return float(value_str)
+        except Exception:
+            return None
+        return None
+
+    def _append_sample(self, value: float) -> None:
+        self._history.append(value)
+        if len(self._history) > self._max_points:
+            self._history = self._history[-self._max_points :]
+
+    def _update_chart(self) -> None:
+        self.series.clear()
+        if not self._history:
+            return
+        for idx, v in enumerate(self._history):
+            self.series.append(float(idx), float(v))
+
+        # Update axis ranges
+        self.axis_x.setRange(0, max(1, len(self._history) - 1))
+        min_v = min(self._history)
+        max_v = max(self._history)
+        if min_v == max_v:
+            # Avoid zero-height range
+            padding = 0.1 if max_v == 0 else abs(max_v) * 0.1
+            min_v -= padding
+            max_v += padding
+        self.axis_y.setRange(min_v, max_v)
+
+    def _flash_threshold(self) -> None:
+        """Briefly flash the value label red when threshold is exceeded."""
+        original_style = self.value_label.styleSheet()
+        self.value_label.setStyleSheet(
+            original_style + " QLabel { background-color: #ffcccc; }"
+        )
+
+        def _reset() -> None:
+            self.value_label.setStyleSheet(original_style)
+
+        QTimer.singleShot(200, _reset)
 
     def _update_status(self) -> None:
         age = age_seconds(self._last_update)
