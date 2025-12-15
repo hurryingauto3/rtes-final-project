@@ -1,0 +1,5 @@
+bleak
+PySide6
+qasync
+
+

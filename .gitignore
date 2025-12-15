@@ -8,6 +8,9 @@ cache
 .vscode/launch.json
 .vscode/ipch
 .vscode/
+.venv/
+.claude/
+.cursor/
 
 # Mac OS
 .DS_Store/
